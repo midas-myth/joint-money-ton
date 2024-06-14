@@ -1,0 +1,2 @@
+const int GROUP_NAME_SIZE_BITS = 350;
+const int GROUP_MAP_KEY_SIZE_BITS = 32;

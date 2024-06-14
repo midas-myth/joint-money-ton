@@ -1,20 +1,32 @@
-import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
+import {
+    Address,
+    beginCell,
+    BitString,
+    Cell,
+    Contract,
+    contractAddress,
+    ContractProvider,
+    Sender,
+    SendMode,
+} from '@ton/core';
 
-export type JointMoneyConfig = {
-    id: number;
-    counter: number;
-};
+export type JointMoneyConfig = {};
 
 export function jointMoneyConfigToCell(config: JointMoneyConfig): Cell {
-    return beginCell().storeUint(config.id, 32).storeUint(config.counter, 32).endCell();
+    return beginCell().storeUint(0, 32).storeDict().endCell();
 }
 
 export const Opcodes = {
-    increase: 0x7e8764ef,
+    createGroup: 0x1,
+    deposit: 0x2,
+    withdraw: 0x3,
 };
 
 export class JointMoney implements Contract {
-    constructor(readonly address: Address, readonly init?: { code: Cell; data: Cell }) {}
+    constructor(
+        readonly address: Address,
+        readonly init?: { code: Cell; data: Cell },
+    ) {}
 
     static createFromAddress(address: Address) {
         return new JointMoney(address);
@@ -34,33 +46,85 @@ export class JointMoney implements Contract {
         });
     }
 
-    async sendIncrease(
+    async sendCreateGroup(
         provider: ContractProvider,
         via: Sender,
         opts: {
-            increaseBy: number;
             value: bigint;
             queryID?: number;
-        }
+        },
     ) {
         await provider.internal(via, {
             value: opts.value,
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             body: beginCell()
-                .storeUint(Opcodes.increase, 32)
+                .storeUint(Opcodes.createGroup, 32)
                 .storeUint(opts.queryID ?? 0, 64)
-                .storeUint(opts.increaseBy, 32)
+                .storeRef(
+                    beginCell()
+                        .storeBits(new BitString(Buffer.from('hello', 'ascii'), 0, 350))
+                        .endCell(),
+                )
+                .storeCoins(0)
+                .storeMaybeRef()
                 .endCell(),
         });
     }
 
-    async getCounter(provider: ContractProvider) {
-        const result = await provider.get('get_counter', []);
-        return result.stack.readNumber();
+    async sendDeposit(
+        provider: ContractProvider,
+        via: Sender,
+        opts: {
+            value: bigint;
+            queryID?: number;
+        },
+    ) {
+        await provider.internal(via, {
+            value: opts.value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(Opcodes.deposit, 32)
+                .storeUint(opts.queryID ?? 0, 64)
+                .endCell(),
+        });
     }
 
-    async getID(provider: ContractProvider) {
-        const result = await provider.get('get_id', []);
-        return result.stack.readNumber();
+    async sendWithdraw(
+        provider: ContractProvider,
+        via: Sender,
+        opts: {
+            value: bigint;
+            queryID?: number;
+        },
+    ) {
+        await provider.internal(via, {
+            value: opts.value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(Opcodes.withdraw, 32)
+                .storeUint(opts.queryID ?? 0, 64)
+                .endCell(),
+        });
+    }
+
+    async getGroupById(provider: ContractProvider, id: bigint) {
+        const result = await provider.get('get_group_by_id', [
+            {
+                type: 'int',
+                value: id,
+            },
+        ]);
+
+        const returnedId = result.stack.readNumber();
+
+        const nameParser = result.stack.readCell().beginParse();
+        let name = nameParser.loadBits(350).toString();
+        name = Buffer.from(name, 'hex')
+            .toString('ascii')
+            .replace(/\x00*\x02$/, '');
+        nameParser.endParse();
+
+        const balance = result.stack.readBigNumber();
+        return { id: returnedId, name, balance };
     }
 }

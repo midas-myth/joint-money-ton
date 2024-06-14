@@ -1,71 +1,196 @@
 #include "imports/stdlib.fc";
+#include "constants.fc";
 
-const op::increase = "op::increase"c; ;; create an opcode from string using the "c" prefix, this results in 0x7e8764ef opcode in this case
+const int op::create_group = 1;
+const int op::deposit = 2;
+const int op::withdraw = 3;
 
-;; storage variables
+(int, slice, int, cell) parse_group(slice body) {
+    int id = body~load_uint(GROUP_MAP_KEY_SIZE_BITS);
+    slice name = body~load_bits(GROUP_NAME_SIZE_BITS);
+    int balance = body~load_grams();
+    cell members = body~load_maybe_ref();
+    body.end_parse();
 
-;; id is required to be able to create different instances of counters
-;; since addresses in TON depend on the initial state of the contract
-global int ctx_id;
-global int ctx_counter;
-
-;; load_data populates storage variables using stored data
-() load_data() impure {
-    var ds = get_data().begin_parse();
-
-    ctx_id = ds~load_uint(32);
-    ctx_counter = ds~load_uint(32);
-
-    ds.end_parse();
+    return (id, name, balance, members);
 }
 
-;; save_data stores storage variables as a cell into persistent storage
-() save_data() impure {
+slice serialize_group(int id, slice name, int balance, cell members) {
+    ~strdump("serialize_group");
+    return begin_cell()
+        .store_uint(id, GROUP_MAP_KEY_SIZE_BITS)
+        .store_slice(name)
+        .store_grams(balance)
+        .store_maybe_ref(members)
+        .end_cell()
+        .begin_parse();
+}
+
+
+slice get_group(int id) {
+    ~strdump("get_group");
+    slice data_reader = get_data().begin_parse();
+    ~strdump("Loaded data reader");
+    int group_count = data_reader~load_uint(GROUP_MAP_KEY_SIZE_BITS);
+    ~strdump("Loaded group count");
+    cell group_map = data_reader~load_dict();
+    ~strdump("Loaded group map");
+    data_reader.end_parse();
+    ~strdump("Finished loading store");
+
+    (slice group, int key) = group_map.udict_get?(GROUP_MAP_KEY_SIZE_BITS, id);
+
+    return group;
+}
+
+() set_group(int id, slice group) impure {
+    ~strdump("set_group");
+    slice data_reader = get_data().begin_parse();
+    int group_count = data_reader~load_uint(GROUP_MAP_KEY_SIZE_BITS);
+    ~strdump("Loaded group count");
+    cell group_map = data_reader~load_dict();
+    ~strdump("Loaded group map");
+    data_reader.end_parse();
+
+    (slice existing_group, int key) = group_map.udict_get?(GROUP_MAP_KEY_SIZE_BITS, id);
+
+    if (null?(existing_group)) {
+        ~strdump("New group");
+        group_count += 1;
+    }
+
+    ~strdump("group_map setting new group");
+    group_map~udict_set(GROUP_MAP_KEY_SIZE_BITS, id, group);
+    ~strdump("group_map set with new group");
     set_data(
         begin_cell()
-            .store_uint(ctx_id, 32)
-            .store_uint(ctx_counter, 32)
+            .store_uint(group_count, GROUP_MAP_KEY_SIZE_BITS)
+            .store_dict(group_map)
             .end_cell()
     );
+    ~strdump("set_data done");
 }
 
-;; recv_internal is the main function of the contract and is called when it receives a message from other contracts
+
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
-    if (in_msg_body.slice_empty?()) { ;; ignore all empty messages
+    if (in_msg_body.slice_empty?()) {
         return ();
     }
 
-    slice cs = in_msg_full.begin_parse();
-    int flags = cs~load_uint(4);
-    if (flags & 1) { ;; ignore all bounced messages
+    ;; int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
+    ;;   src:MsgAddress dest:MsgAddressInt 
+    ;;   value:CurrencyCollection ihr_fee:Grams fwd_fee:Grams
+    ;;   created_lt:uint64 created_at:uint32 = CommonMsgInfoRelaxed;
+
+    slice msg_reader = in_msg_full.begin_parse();
+    ;; bit prefix, instant hypercube routing, bounce flag, bounced flag
+    int flags = msg_reader~load_uint(4);
+    if (flags & 1) {
+        return ();
+    }
+    slice src = msg_reader~load_msg_addr();
+    slice dest = msg_reader~load_msg_addr();
+    src~dump();
+    dest~dump();
+
+    if (equal_slices(src, my_address())) {
+        ~strdump("Weird, I am the source");
+    }
+
+    if (equal_slices(dest, my_address())) {
+        ~strdump("I am the destination");
+    }
+
+    int value = msg_reader~load_coins();
+    value~dump();
+    cell currency_collection = msg_reader~load_dict();
+
+    int ihr_fee = msg_reader~load_grams();
+    ~strdump("ihr_fee");
+    ~dump(ihr_fee);
+    int fwd_fee = msg_reader~load_grams();
+    ~strdump("fwd_fee");
+    ~dump(fwd_fee);
+    int created_lt = msg_reader~load_uint(64);
+    ~strdump("created_lt");
+    ~dump(created_lt);
+    int created_at = msg_reader~load_uint(32);
+    ~strdump("created_at");
+    ~dump(created_at);
+
+
+    int op = in_msg_body~load_uint(32);
+    ~dump([op::create_group, op]);
+
+    int query_id = in_msg_body~load_uint(64);
+    query_id~dump();
+
+    if (op == op::create_group) {
+        ~strdump("op::create_group");
+        slice data_reader = get_data().begin_parse();
+        int group_count = data_reader~load_uint(GROUP_MAP_KEY_SIZE_BITS);
+        int new_group_id = group_count + 1;
+        ~strdump("new_group_id");
+        ~dump(new_group_id);
+
+        cell name_cell = in_msg_body~load_ref();
+        ~strdump("name_cell loaded");
+        slice name_reader = name_cell.begin_parse();
+        ~strdump("name_reader");
+        slice name = name_reader~load_bits(GROUP_NAME_SIZE_BITS);
+        ~strdump("name read");
+        name_reader.end_parse();
+        if (name.slice_empty?()) {
+            ~strdump("Name is empty");
+            throw(0xffff);
+        }
+        ~strdump("name");
+        ~dump(name);
+        int balance = in_msg_body~load_grams();
+        ~strdump("balance");
+        ~dump(balance);
+        cell members = in_msg_body~load_maybe_ref();
+        ~strdump("members");
+        ~dump(members);
+        in_msg_body.end_parse();
+        ~strdump("in_msg_body parsed");
+
+        ;; int id, slice name, int balance, cell members
+        slice new_group = serialize_group(new_group_id, name, balance, members);
+        ~strdump("new_group");
+
+        set_group(
+            new_group_id,
+            new_group   
+        );
+        ~strdump("set_group done");
+
+
+        return ();
+    }
+    elseif (op == op::deposit) {
+        return ();
+    }
+    elseif (op == op::withdraw) {
         return ();
     }
 
-    load_data(); ;; here we populate the storage variables
+    throw(0xffff);
+}
 
-    int op = in_msg_body~load_uint(32); ;; by convention, the first 32 bits of incoming message is the op
-    int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
 
-    if (op == op::increase) {
-        int increase_by = in_msg_body~load_uint(32);
-        ctx_counter += increase_by;
-        save_data();
-        return ();
+(int, slice, int) get_group_by_id(int id) method_id {
+    ~strdump("get_group_by_id");
+    slice group = get_group(id);
+
+    if (null?(group)) {
+        ~strdump("Group not found");
+        return (0, "", 0);
     }
 
-    throw(0xffff); ;; if the message contains an op that is not known to this contract, we throw
+    (int group_id, slice group_name, int group_balance, cell group_members) = parse_group(group);
+
+ 
+    return (group_id, group_name, group_balance);
 }
 
-;; get methods are a means to conveniently read contract data using, for example, HTTP APIs
-;; they are marked with method_id
-;; note that unlike in many other smart contract VMs, get methods cannot be called by other contracts
-
-int get_counter() method_id {
-    load_data();
-    return ctx_counter;
-}
-
-int get_id() method_id {
-    load_data();
-    return ctx_id;
-}
