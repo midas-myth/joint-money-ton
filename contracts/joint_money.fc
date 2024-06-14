@@ -16,7 +16,6 @@ const int op::withdraw = 3;
 }
 
 slice serialize_group(int id, slice name, int balance, cell members) {
-    ~strdump("serialize_group");
     return begin_cell()
         .store_uint(id, GROUP_MAP_KEY_SIZE_BITS)
         .store_slice(name)
@@ -28,15 +27,10 @@ slice serialize_group(int id, slice name, int balance, cell members) {
 
 
 slice get_group(int id) {
-    ~strdump("get_group");
     slice data_reader = get_data().begin_parse();
-    ~strdump("Loaded data reader");
     int group_count = data_reader~load_uint(GROUP_MAP_KEY_SIZE_BITS);
-    ~strdump("Loaded group count");
     cell group_map = data_reader~load_dict();
-    ~strdump("Loaded group map");
     data_reader.end_parse();
-    ~strdump("Finished loading store");
 
     (slice group, int key) = group_map.udict_get?(GROUP_MAP_KEY_SIZE_BITS, id);
 
@@ -44,31 +38,25 @@ slice get_group(int id) {
 }
 
 () set_group(int id, slice group) impure {
-    ~strdump("set_group");
     slice data_reader = get_data().begin_parse();
     int group_count = data_reader~load_uint(GROUP_MAP_KEY_SIZE_BITS);
-    ~strdump("Loaded group count");
     cell group_map = data_reader~load_dict();
-    ~strdump("Loaded group map");
     data_reader.end_parse();
 
     (slice existing_group, int key) = group_map.udict_get?(GROUP_MAP_KEY_SIZE_BITS, id);
 
-    if (null?(existing_group)) {
-        ~strdump("New group");
+    if (null?(existing_group)) {        
         group_count += 1;
     }
 
-    ~strdump("group_map setting new group");
     group_map~udict_set(GROUP_MAP_KEY_SIZE_BITS, id, group);
-    ~strdump("group_map set with new group");
+
     set_data(
         begin_cell()
             .store_uint(group_count, GROUP_MAP_KEY_SIZE_BITS)
             .store_dict(group_map)
             .end_cell()
     );
-    ~strdump("set_data done");
 }
 
 
@@ -90,81 +78,39 @@ slice get_group(int id) {
     }
     slice src = msg_reader~load_msg_addr();
     slice dest = msg_reader~load_msg_addr();
-    src~dump();
-    dest~dump();
-
-    if (equal_slices(src, my_address())) {
-        ~strdump("Weird, I am the source");
-    }
-
-    if (equal_slices(dest, my_address())) {
-        ~strdump("I am the destination");
-    }
-
     int value = msg_reader~load_coins();
-    value~dump();
     cell currency_collection = msg_reader~load_dict();
-
     int ihr_fee = msg_reader~load_grams();
-    ~strdump("ihr_fee");
-    ~dump(ihr_fee);
     int fwd_fee = msg_reader~load_grams();
-    ~strdump("fwd_fee");
-    ~dump(fwd_fee);
     int created_lt = msg_reader~load_uint(64);
-    ~strdump("created_lt");
-    ~dump(created_lt);
     int created_at = msg_reader~load_uint(32);
-    ~strdump("created_at");
-    ~dump(created_at);
-
 
     int op = in_msg_body~load_uint(32);
-    ~dump([op::create_group, op]);
-
     int query_id = in_msg_body~load_uint(64);
-    query_id~dump();
 
-    if (op == op::create_group) {
-        ~strdump("op::create_group");
+    if (op == op::create_group) {        
         slice data_reader = get_data().begin_parse();
         int group_count = data_reader~load_uint(GROUP_MAP_KEY_SIZE_BITS);
         int new_group_id = group_count + 1;
-        ~strdump("new_group_id");
-        ~dump(new_group_id);
 
         cell name_cell = in_msg_body~load_ref();
-        ~strdump("name_cell loaded");
         slice name_reader = name_cell.begin_parse();
-        ~strdump("name_reader");
         slice name = name_reader~load_bits(GROUP_NAME_SIZE_BITS);
-        ~strdump("name read");
         name_reader.end_parse();
         if (name.slice_empty?()) {
-            ~strdump("Name is empty");
             throw(0xffff);
         }
-        ~strdump("name");
-        ~dump(name);
         int balance = in_msg_body~load_grams();
-        ~strdump("balance");
-        ~dump(balance);
         cell members = in_msg_body~load_maybe_ref();
-        ~strdump("members");
-        ~dump(members);
         in_msg_body.end_parse();
-        ~strdump("in_msg_body parsed");
 
         ;; int id, slice name, int balance, cell members
         slice new_group = serialize_group(new_group_id, name, balance, members);
-        ~strdump("new_group");
 
         set_group(
             new_group_id,
             new_group   
         );
-        ~strdump("set_group done");
-
 
         return ();
     }
@@ -180,11 +126,9 @@ slice get_group(int id) {
 
 
 (int, slice, int) get_group_by_id(int id) method_id {
-    ~strdump("get_group_by_id");
     slice group = get_group(id);
 
     if (null?(group)) {
-        ~strdump("Group not found");
         return (0, "", 0);
     }
 
